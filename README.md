@@ -1,5 +1,5 @@
 # firasan
-A faster,smaller,asan
+A faster,smaller,Address Sanitizer
 
 #                                                                 FirASAN
 

@@ -81,13 +81,13 @@ void  operator delete[](void* pointer, const char* file, int line)
   直接给个案例:
 
   ```c++
-  `ASAN_OPTIONS="halt_on_error=0:disable_coredump=0:log_path=./asan:log_exe_name=true:abort_on_error=1:unmap_shadow_on_exit=1" ./SuperServer`
+  ASAN_OPTIONS="halt_on_error=0:disable_coredump=0:log_path=./asan:log_exe_name=true:abort_on_error=1:unmap_shadow_on_exit=1" ./Server
   ```
 
   为避免生产环境下不方便设置环境变量，可在程序里，直接实现weak函数
 
   ```c++
-  const char* __asan_default_options() {
+  extern "C" const char* __asan_default_options() {
   return "halt_on_error=0:disable_coredump=0:log_path=./asan:log_exe_name=true:abort_on_error=1:unmap_shadow_on_exit=1\";
   }
   ```

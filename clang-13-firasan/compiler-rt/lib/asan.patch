@@ -1,0 +1,1018 @@
+diff asan/asan_allocator.cpp /home/seal/workspace/gcc-11.2.0/libsanitizer/asan/asan_allocator.cpp
+479c479
+<     m->SetAllocContext(t ? t->tid() : kMainTid, StackDepotPut(*stack));
+---
+>     m->SetAllocContext(t ? t->tid() : 0, StackDepotPut(*stack));
+573c573
+<     m->SetAllocContext(t ? t->tid() : kMainTid, StackDepotPut(*stack));
+---
+>     m->SetAllocContext(t ? t->tid() : 0, StackDepotPut(*stack));
+855c855
+<   void ForceLock() ACQUIRE(fallback_mutex) {
+---
+>   void ForceLock() {
+860c860
+<   void ForceUnlock() RELEASE(fallback_mutex) {
+---
+>   void ForceUnlock() {
+1084c1084,1086
+< void asan_mz_force_lock() NO_THREAD_SAFETY_ANALYSIS { instance.ForceLock(); }
+---
+> void asan_mz_force_lock() {
+>   instance.ForceLock();
+> }
+1086c1088
+< void asan_mz_force_unlock() NO_THREAD_SAFETY_ANALYSIS {
+---
+> void asan_mz_force_unlock() {
+1184,1211d1185
+< 
+< void GetAdditionalThreadContextPtrs(ThreadContextBase *tctx, void *ptrs) {
+<   // Look for the arg pointer of threads that have been created or are running.
+<   // This is necessary to prevent false positive leaks due to the AsanThread
+<   // holding the only live reference to a heap object.  This can happen because
+<   // the `pthread_create()` interceptor doesn't wait for the child thread to
+<   // start before returning and thus loosing the the only live reference to the
+<   // heap object on the stack.
+< 
+<   __asan::AsanThreadContext *atctx =
+<       reinterpret_cast<__asan::AsanThreadContext *>(tctx);
+<   __asan::AsanThread *asan_thread = atctx->thread;
+< 
+<   // Note ThreadStatusRunning is required because there is a small window where
+<   // the thread status switches to `ThreadStatusRunning` but the `arg` pointer
+<   // still isn't on the stack yet.
+<   if (atctx->status != ThreadStatusCreated &&
+<       atctx->status != ThreadStatusRunning)
+<     return;
+< 
+<   uptr thread_arg = reinterpret_cast<uptr>(asan_thread->get_arg());
+<   if (!thread_arg)
+<     return;
+< 
+<   auto ptrsVec = reinterpret_cast<InternalMmapVector<uptr> *>(ptrs);
+<   ptrsVec->push_back(thread_arg);
+< }
+< 
+diff asan/asan_descriptions.cpp /home/seal/workspace/gcc-11.2.0/libsanitizer/asan/asan_descriptions.cpp
+47c47
+<   if (context->tid == kMainTid || context->announced) {
+---
+>   if (context->tid == 0 || context->announced) {
+51c51
+<   InternalScopedString str;
+---
+>   InternalScopedString str(1024);
+79a80
+>     CHECK(0 && "Address is not in memory and not in shadow?");
+128c129
+<   InternalScopedString str;
+---
+>   InternalScopedString str(4096);
+245c246
+<   InternalScopedString str;
+---
+>   InternalScopedString str(1024);
+278c279
+<   InternalScopedString str;
+---
+>   InternalScopedString str(4096);
+466,472c467
+<   data.wild.addr = addr;
+<   data.wild.access_size = access_size;
+< }
+< 
+< void WildAddressDescription::Print() const {
+<   Printf("Address %p is a wild pointer inside of access range of size %p.\n",
+<          addr, access_size);
+---
+>   addr = 0;
+diff asan/asan_descriptions.h /home/seal/workspace/gcc-11.2.0/libsanitizer/asan/asan_descriptions.h
+149,155d148
+< struct WildAddressDescription {
+<   uptr addr;
+<   uptr access_size;
+< 
+<   void Print() const;
+< };
+< 
+203c196
+<       WildAddressDescription wild;
+---
+>       uptr addr;
+221c214
+<         return data.wild.addr;
+---
+>         return data.addr;
+236c229
+<         data.wild.Print();
+---
+>         Printf("Address %p is a wild pointer.\n", data.addr);
+diff asan/asan_errors.cpp /home/seal/workspace/gcc-11.2.0/libsanitizer/asan/asan_errors.cpp
+346,347c346
+<   InternalScopedString g1_loc;
+<   InternalScopedString g2_loc;
+---
+>   InternalScopedString g1_loc(256), g2_loc(256);
+364c363
+<   InternalScopedString error_msg;
+---
+>   InternalScopedString error_msg(256);
+535a535
+>   PrintShadowByte(str, "  Shadow gap:              ", kAsanShadowGap);
+557c557
+<   InternalScopedString str;
+---
+>   InternalScopedString str(4096 * 8);
+diff asan/asan_fake_stack.cpp /home/seal/workspace/gcc-11.2.0/libsanitizer/asan/asan_fake_stack.cpp
+68c68
+<     InternalScopedString str;
+---
+>     InternalScopedString str(kNumberOfSizeClasses * 50);
+190c190
+<   return t->get_or_create_fake_stack();
+---
+>   return t->fake_stack();
+201,207c201
+< static FakeStack *GetFakeStackFastAlways() {
+<   if (FakeStack *fs = GetTLSFakeStack())
+<     return fs;
+<   return GetFakeStack();
+< }
+< 
+< static ALWAYS_INLINE uptr OnMalloc(uptr class_id, uptr size) {
+---
+> ALWAYS_INLINE uptr OnMalloc(uptr class_id, uptr size) {
+219,233c213
+< static ALWAYS_INLINE uptr OnMallocAlways(uptr class_id, uptr size) {
+<   FakeStack *fs = GetFakeStackFastAlways();
+<   if (!fs)
+<     return 0;
+<   uptr local_stack;
+<   uptr real_stack = reinterpret_cast<uptr>(&local_stack);
+<   FakeFrame *ff = fs->Allocate(fs->stack_size_log(), class_id, real_stack);
+<   if (!ff)
+<     return 0;  // Out of fake stack.
+<   uptr ptr = reinterpret_cast<uptr>(ff);
+<   SetShadow(ptr, size, class_id, 0);
+<   return ptr;
+< }
+< 
+< static ALWAYS_INLINE void OnFree(uptr ptr, uptr class_id, uptr size) {
+---
+> ALWAYS_INLINE void OnFree(uptr ptr, uptr class_id, uptr size) {
+242,253c222,229
+< #define DEFINE_STACK_MALLOC_FREE_WITH_CLASS_ID(class_id)                      \
+<   extern "C" SANITIZER_INTERFACE_ATTRIBUTE uptr                               \
+<       __asan_stack_malloc_##class_id(uptr size) {                             \
+<     return OnMalloc(class_id, size);                                          \
+<   }                                                                           \
+<   extern "C" SANITIZER_INTERFACE_ATTRIBUTE uptr                               \
+<       __asan_stack_malloc_always_##class_id(uptr size) {                      \
+<     return OnMallocAlways(class_id, size);                                    \
+<   }                                                                           \
+<   extern "C" SANITIZER_INTERFACE_ATTRIBUTE void __asan_stack_free_##class_id( \
+<       uptr ptr, uptr size) {                                                  \
+<     OnFree(ptr, class_id, size);                                              \
+---
+> #define DEFINE_STACK_MALLOC_FREE_WITH_CLASS_ID(class_id)                       \
+>   extern "C" SANITIZER_INTERFACE_ATTRIBUTE uptr                                \
+>       __asan_stack_malloc_##class_id(uptr size) {                              \
+>     return OnMalloc(class_id, size);                                           \
+>   }                                                                            \
+>   extern "C" SANITIZER_INTERFACE_ATTRIBUTE void __asan_stack_free_##class_id(  \
+>       uptr ptr, uptr size) {                                                   \
+>     OnFree(ptr, class_id, size);                                               \
+267d242
+< 
+269,271d243
+< // TODO: remove this method and fix tests that use it by setting
+< // -asan-use-after-return=never, after modal UAR flag lands
+< // (https://github.com/google/sanitizers/issues/1394)
+diff asan/asan_flags.cpp /home/seal/workspace/gcc-11.2.0/libsanitizer/asan/asan_flags.cpp
+157a158,161
+>   if (SANITIZER_RTEMS) {
+>     CHECK(!f->unmap_shadow_on_exit);
+>     CHECK(!f->protect_shadow_gap);
+>   }
+diff asan/asan_flags.inc /home/seal/workspace/gcc-11.2.0/libsanitizer/asan/asan_flags.inc
+47c47
+<     bool, replace_str, true,
+---
+>     bool, replace_str, false,
+50c50
+< ASAN_FLAG(bool, replace_intrin, true,
+---
+> ASAN_FLAG(bool, replace_intrin, false,
+90c90,91
+< ASAN_FLAG(bool, protect_shadow_gap, true, "If set, mprotect the shadow gap")
+---
+> ASAN_FLAG(bool, protect_shadow_gap, !SANITIZER_RTEMS,
+>           "If set, mprotect the shadow gap")
+150c151
+< ASAN_FLAG(bool, halt_on_error, true,
+---
+> ASAN_FLAG(bool, halt_on_error, false,
+diff asan/asan_fuchsia.cpp /home/seal/workspace/gcc-11.2.0/libsanitizer/asan/asan_fuchsia.cpp
+84c84
+<   return RoundUpTo(sizeof(AsanThread), _zx_system_get_page_size());
+---
+>   return RoundUpTo(sizeof(AsanThread), PAGE_SIZE);
+diff asan/asan_globals.cpp /home/seal/workspace/gcc-11.2.0/libsanitizer/asan/asan_globals.cpp
+157,173d156
+< // Check ODR violation for given global G by checking if it's already poisoned.
+< // We use this method in case compiler doesn't use private aliases for global
+< // variables.
+< static void CheckODRViolationViaPoisoning(const Global *g) {
+<   if (__asan_region_is_poisoned(g->beg, g->size_with_redzone)) {
+<     // This check may not be enough: if the first global is much larger
+<     // the entire redzone of the second global may be within the first global.
+<     for (ListOfGlobals *l = list_of_all_globals; l; l = l->next) {
+<       if (g->beg == l->g->beg &&
+<           (flags()->detect_odr_violation >= 2 || g->size != l->g->size) &&
+<           !IsODRViolationSuppressed(g->name))
+<         ReportODRViolation(g, FindRegistrationSite(g),
+<                            l->g, FindRegistrationSite(l->g));
+<     }
+<   }
+< }
+< 
+219,220d201
+<     else
+<       CheckODRViolationViaPoisoning(g);
+只在 asan/ 存在：asan_ignorelist.txt
+diff asan/asan_interceptors.cpp /home/seal/workspace/gcc-11.2.0/libsanitizer/asan/asan_interceptors.cpp
+26c26
+< // There is no general interception at all on Fuchsia.
+---
+> // There is no general interception at all on Fuchsia and RTEMS.
+29c29
+< #if !SANITIZER_FUCHSIA
+---
+> #if !SANITIZER_FUCHSIA && !SANITIZER_RTEMS
+31,33c31,33
+< #  if SANITIZER_POSIX
+< #    include "sanitizer_common/sanitizer_posix.h"
+< #  endif
+---
+> #if SANITIZER_POSIX
+> #include "sanitizer_common/sanitizer_posix.h"
+> #endif
+35,38c35,38
+< #  if ASAN_INTERCEPT__UNWIND_RAISEEXCEPTION || \
+<       ASAN_INTERCEPT__SJLJ_UNWIND_RAISEEXCEPTION
+< #    include <unwind.h>
+< #  endif
+---
+> #if ASAN_INTERCEPT__UNWIND_RAISEEXCEPTION || \
+>     ASAN_INTERCEPT__SJLJ_UNWIND_RAISEEXCEPTION
+> #include <unwind.h>
+> #endif
+40,44c40,44
+< #  if defined(__i386) && SANITIZER_LINUX
+< #    define ASAN_PTHREAD_CREATE_VERSION "GLIBC_2.1"
+< #  elif defined(__mips__) && SANITIZER_LINUX
+< #    define ASAN_PTHREAD_CREATE_VERSION "GLIBC_2.2"
+< #  endif
+---
+> #if defined(__i386) && SANITIZER_LINUX
+> #define ASAN_PTHREAD_CREATE_VERSION "GLIBC_2.1"
+> #elif defined(__mips__) && SANITIZER_LINUX
+> #define ASAN_PTHREAD_CREATE_VERSION "GLIBC_2.2"
+> #endif
+84,85c84,85
+< DECLARE_REAL_AND_INTERCEPTOR(void *, malloc, uptr)
+< DECLARE_REAL_AND_INTERCEPTOR(void, free, void *)
+---
+> DECLARE_REAL_AND_INTERCEPTOR(void *, fir_malloc, uptr)
+> DECLARE_REAL_AND_INTERCEPTOR(void, fir_free, void *)
+193a194,198
+> struct ThreadStartParam {
+>   atomic_uintptr_t t;
+>   atomic_uintptr_t is_registered;
+> };
+> 
+196c201,205
+<   AsanThread *t = (AsanThread *)arg;
+---
+>   ThreadStartParam *param = reinterpret_cast<ThreadStartParam *>(arg);
+>   AsanThread *t = nullptr;
+>   while ((t = reinterpret_cast<AsanThread *>(
+>               atomic_load(&param->t, memory_order_acquire))) == nullptr)
+>     internal_sched_yield();
+198c207
+<   return t->ThreadStart(GetTid());
+---
+>   return t->ThreadStart(GetTid(), &param->is_registered);
+211,215c220,222
+< 
+<   u32 current_tid = GetCurrentTidOrInvalid();
+<   AsanThread *t =
+<       AsanThread::Create(start_routine, arg, current_tid, &stack, detached);
+< 
+---
+>   ThreadStartParam param;
+>   atomic_store(&param.t, 0, memory_order_relaxed);
+>   atomic_store(&param.is_registered, 0, memory_order_relaxed);
+225c232
+<     result = REAL(pthread_create)(thread, attr, asan_thread_start, t);
+---
+>     result = REAL(pthread_create)(thread, attr, asan_thread_start, &param);
+227,231c234,246
+<   if (result != 0) {
+<     // If the thread didn't start delete the AsanThread to avoid leaking it.
+<     // Note AsanThreadContexts never get destroyed so the AsanThreadContext
+<     // that was just created for the AsanThread is wasted.
+<     t->Destroy();
+---
+>   if (result == 0) {
+>     u32 current_tid = GetCurrentTidOrInvalid();
+>     AsanThread *t =
+>         AsanThread::Create(start_routine, arg, current_tid, &stack, detached);
+>     atomic_store(&param.t, reinterpret_cast<uptr>(t), memory_order_release);
+>     // Wait until the AsanThread object is initialized and the ThreadRegistry
+>     // entry is in "started" state. One reason for this is that after this
+>     // interceptor exits, the child thread's stack may be the only thing holding
+>     // the |arg| pointer. This may cause LSan to report a leak if leak checking
+>     // happens at a point when the interceptor has already exited, but the stack
+>     // range for the child thread is not yet known.
+>     while (atomic_load(&param.is_registered, memory_order_acquire) == 0)
+>       internal_sched_yield();
+429c444
+< 
+---
+> #if 0
+444c459,460
+< 
+---
+> #endif
+> #if 0
+460a477
+> #endif
+627c644
+<   ASAN_INTERCEPT_FUNC(strdup);
+---
+>   //ASAN_INTERCEPT_FUNC(strdup);
+629c646
+<   ASAN_INTERCEPT_FUNC(__strdup);
+---
+>   //ASAN_INTERCEPT_FUNC(__strdup);
+diff asan/asan_interceptors.h /home/seal/workspace/gcc-11.2.0/libsanitizer/asan/asan_interceptors.h
+37c37
+< // There is no general interception at all on Fuchsia.
+---
+> // There is no general interception at all on Fuchsia and RTEMS.
+40c40
+< #if !SANITIZER_FUCHSIA
+---
+> #if !SANITIZER_FUCHSIA && !SANITIZER_RTEMS
+63c63
+< #if SANITIZER_GLIBC || SANITIZER_SOLARIS
+---
+> #if (SANITIZER_LINUX && !SANITIZER_ANDROID) || SANITIZER_SOLARIS
+75c75
+< #if SANITIZER_GLIBC
+---
+> #if SANITIZER_LINUX && !SANITIZER_ANDROID
+84c84,89
+< # define ASAN_INTERCEPT___CXA_RETHROW_PRIMARY_EXCEPTION 1
+---
+> # if ! defined(ASAN_HAS_CXA_RETHROW_PRIMARY_EXCEPTION) \
+>      || ASAN_HAS_CXA_RETHROW_PRIMARY_EXCEPTION
+> #   define ASAN_INTERCEPT___CXA_RETHROW_PRIMARY_EXCEPTION 1
+> # else
+> #   define ASAN_INTERCEPT___CXA_RETHROW_PRIMARY_EXCEPTION 0
+> # endif
+109c114
+< #if SANITIZER_GLIBC
+---
+> #if SANITIZER_LINUX && !SANITIZER_ANDROID
+137,140c142,145
+< #define ASAN_INTERCEPT_FUNC(name)                                        \
+<   do {                                                                   \
+<     if (!INTERCEPT_FUNCTION(name))                                       \
+<       VReport(1, "AddressSanitizer: failed to intercept '%s'\n", #name); \
+---
+> #define ASAN_INTERCEPT_FUNC(name)                                         \
+>   do {                                                                    \
+>     if (!INTERCEPT_FUNCTION(name))                                        \
+>       VReport(1, "AddressSanitizer: failed to intercept '%s'\n'", #name); \
+diff asan/asan_interceptors_memintrinsics.cpp /home/seal/workspace/gcc-11.2.0/libsanitizer/asan/asan_interceptors_memintrinsics.cpp
+33c33
+< #if SANITIZER_FUCHSIA
+---
+> #if SANITIZER_FUCHSIA || SANITIZER_RTEMS
+35c35
+< // Fuchsia doesn't use sanitizer_common_interceptors.inc, but
+---
+> // Fuchsia and RTEMS don't use sanitizer_common_interceptors.inc, but
+43c43
+< #endif  // SANITIZER_FUCHSIA
+---
+> #endif  // SANITIZER_FUCHSIA || SANITIZER_RTEMS
+diff asan/asan_interface.inc /home/seal/workspace/gcc-11.2.0/libsanitizer/asan/asan_interface.inc
+137,147d136
+< INTERFACE_FUNCTION(__asan_stack_malloc_always_0)
+< INTERFACE_FUNCTION(__asan_stack_malloc_always_1)
+< INTERFACE_FUNCTION(__asan_stack_malloc_always_2)
+< INTERFACE_FUNCTION(__asan_stack_malloc_always_3)
+< INTERFACE_FUNCTION(__asan_stack_malloc_always_4)
+< INTERFACE_FUNCTION(__asan_stack_malloc_always_5)
+< INTERFACE_FUNCTION(__asan_stack_malloc_always_6)
+< INTERFACE_FUNCTION(__asan_stack_malloc_always_7)
+< INTERFACE_FUNCTION(__asan_stack_malloc_always_8)
+< INTERFACE_FUNCTION(__asan_stack_malloc_always_9)
+< INTERFACE_FUNCTION(__asan_stack_malloc_always_10)
+diff asan/asan_internal.h /home/seal/workspace/gcc-11.2.0/libsanitizer/asan/asan_internal.h
+38,42c38,42
+< #  if SANITIZER_IOS || SANITIZER_ANDROID
+< #    define ASAN_LOW_MEMORY 1
+< #  else
+< #    define ASAN_LOW_MEMORY 0
+< #  endif
+---
+> # if SANITIZER_IOS || SANITIZER_ANDROID || SANITIZER_RTEMS
+> #  define ASAN_LOW_MEMORY 1
+> # else
+> #  define ASAN_LOW_MEMORY 0
+> # endif
+80c80
+< // asan_linux.cpp / asan_mac.cpp / asan_win.cpp
+---
+> // asan_linux.cpp / asan_mac.cpp / asan_rtems.cpp / asan_win.cpp
+161a162,164
+> // Used to populate the shadow gap for systems without memory
+> // protection there (i.e. Myriad).
+> const int kAsanShadowGap = 0xcc;
+diff asan/asan_linux.cpp /home/seal/workspace/gcc-11.2.0/libsanitizer/asan/asan_linux.cpp
+58d57
+< extern ElfW(Dyn) _DYNAMIC[];
+88c87
+<   return &_DYNAMIC;
+---
+>   return &_DYNAMIC;  // defined in link.h
+diff asan/asan_malloc_linux.cpp /home/seal/workspace/gcc-11.2.0/libsanitizer/asan/asan_malloc_linux.cpp
+18c18
+<     SANITIZER_NETBSD || SANITIZER_SOLARIS
+---
+>     SANITIZER_NETBSD || SANITIZER_RTEMS || SANITIZER_SOLARIS
+20,26c20,27
+< #  include "asan_allocator.h"
+< #  include "asan_interceptors.h"
+< #  include "asan_internal.h"
+< #  include "asan_stack.h"
+< #  include "sanitizer_common/sanitizer_allocator_checks.h"
+< #  include "sanitizer_common/sanitizer_errno.h"
+< #  include "sanitizer_common/sanitizer_tls_get_addr.h"
+---
+> #include "sanitizer_common/sanitizer_allocator_checks.h"
+> #include "sanitizer_common/sanitizer_errno.h"
+> #include "sanitizer_common/sanitizer_tls_get_addr.h"
+> #include "asan_allocator.h"
+> #include "asan_interceptors.h"
+> #include "asan_internal.h"
+> #include "asan_malloc_local.h"
+> #include "asan_stack.h"
+33c34
+< static const uptr kDlsymAllocPoolSize = 1024;
+---
+> static const uptr kDlsymAllocPoolSize = SANITIZER_RTEMS ? 4096 : 1024;
+83a85,97
+> #if SANITIZER_RTEMS
+> void* MemalignFromLocalPool(uptr alignment, uptr size) {
+>   void *ptr = nullptr;
+>   alignment = Max(alignment, kWordSize);
+>   PosixMemalignFromLocalPool(&ptr, alignment, size);
+>   return ptr;
+> }
+> 
+> bool IsFromLocalPool(const void *ptr) {
+>   return IsInDlsymAllocPool(ptr);
+> }
+> #endif
+> 
+89c103,105
+< static inline bool UseLocalPool() { return MaybeInDlsym(); }
+---
+> static inline bool UseLocalPool() {
+>   return EarlyMalloc() || MaybeInDlsym();
+> }
+106c122
+< INTERCEPTOR(void, free, void *ptr) {
+---
+> INTERCEPTOR(void, fir_free, void *ptr) {
+124c140
+< INTERCEPTOR(void*, malloc, uptr size) {
+---
+> INTERCEPTOR(void*, fir_malloc, uptr size) {
+127a144
+> //  if (!open) return AllocateFromLocalPool(size);
+132a150
+> #if 0
+158a177
+> #endif // ignore calloc realloc reallocarray
+213a233
+> #if 0
+224a245
+> #endif // ignore valloc pvalloc
+237,238c258,259
+<   void *(*calloc)(uptr n_elements, uptr elem_size);
+<   void *(*realloc)(void *oldMem, uptr bytes);
+---
+> //  void *(*calloc)(uptr n_elements, uptr elem_size);
+> //  void *(*realloc)(void *oldMem, uptr bytes);
+244c265
+<   void *(*calloc)(uptr n_elements, uptr elem_size);
+---
+> //  void *(*calloc)(uptr n_elements, uptr elem_size);
+251,253c272,274
+<   void* (*pvalloc)(uptr size);
+<   void *(*realloc)(void *oldMem, uptr bytes);
+<   void* (*valloc)(uptr size);
+---
+>   //void* (*pvalloc)(uptr size);
+>   //void *(*realloc)(void *oldMem, uptr bytes);
+>   //void* (*valloc)(uptr size);
+254a276,279
+> 
+> ALIGNED(32) const MallocDebugK asan_malloc_dispatch_k = {
+>     WRAP(malloc),  WRAP(free),     WRAP(calloc),
+>     WRAP(realloc), WRAP(memalign), WRAP(malloc_usable_size)};
+只在 /home/seal/workspace/gcc-11.2.0/libsanitizer/asan/ 存在：asan_malloc_local.h
+diff asan/asan_mapping.h /home/seal/workspace/gcc-11.2.0/libsanitizer/asan/asan_mapping.h
+75,81d74
+< // Default Linux/RISCV64 Sv39 mapping:
+< // || `[0x1555550000, 0x3fffffffff]` || HighMem    ||
+< // || `[0x0fffffa000, 0x1555555fff]` || HighShadow ||
+< // || `[0x0effffa000, 0x0fffff9fff]` || ShadowGap  ||
+< // || `[0x0d55550000, 0x0effff9fff]` || LowShadow  ||
+< // || `[0x0000000000, 0x0d5554ffff]` || LowMem     ||
+< //
+88a82,95
+> // RISC-V has only 38 bits for task size
+> // Low mem size is set with kRiscv64_ShadowOffset64 in
+> // compiler-rt/lib/asan/asan_allocator.h and in
+> // llvm/lib/Transforms/Instrumentation/AddressSanitizer.cpp with
+> // kRiscv64_ShadowOffset64, High mem top border is set with
+> // GetMaxVirtualAddress() in
+> // compiler-rt/lib/sanitizer_common/sanitizer_linux.cpp
+> // Default Linux/RISCV64 Sv39/Sv48 mapping:
+> // || `[0x000820000000, 0x003fffffffff]` || HighMem    ||
+> // || `[0x000124000000, 0x00081fffffff]` || HighShadow ||
+> // || `[0x000024000000, 0x000123ffffff]` || ShadowGap  ||
+> // || `[0x000020000000, 0x000023ffffff]` || LowShadow  ||
+> // || `[0x000000000000, 0x00001fffffff]` || LowMem     ||
+> //
+152a160,165
+> //
+> // Shadow mapping on Myriad2 (for shadow scale 5):
+> // || `[0x9ff80000, 0x9fffffff]` || ShadowGap  ||
+> // || `[0x9f000000, 0x9ff7ffff]` || LowShadow  ||
+> // || `[0x80000000, 0x9effffff]` || LowMem     ||
+> // || `[0x00000000, 0x7fffffff]` || Ignored    ||
+157c170
+< static const u64 kDefaultShadowScale = 3;
+---
+> static const u64 kDefaultShadowScale = SANITIZER_MYRIAD2 ? 5 : 3;
+165c178
+< static const u64 kRiscv64_ShadowOffset64 = 0xd55550000;
+---
+> static const u64 kRiscv64_ShadowOffset64 = 0x20000000;
+168c181
+< static const u64 kPPC64_ShadowOffset64 = 1ULL << 44;
+---
+> static const u64 kPPC64_ShadowOffset64 = 1ULL << 41;
+176a190,198
+> static const u64 kMyriadMemoryOffset32 = 0x80000000ULL;
+> static const u64 kMyriadMemorySize32 = 0x20000000ULL;
+> static const u64 kMyriadMemoryEnd32 =
+>     kMyriadMemoryOffset32 + kMyriadMemorySize32 - 1;
+> static const u64 kMyriadShadowOffset32 =
+>     (kMyriadMemoryOffset32 + kMyriadMemorySize32 -
+>      (kMyriadMemorySize32 >> kDefaultShadowScale));
+> static const u64 kMyriadCacheBitMask32 = 0x40000000ULL;
+> 
+193a216,217
+> #  elif SANITIZER_MYRIAD2
+> #    define SHADOW_OFFSET kMyriadShadowOffset32
+264,265c288,291
+< #if defined(__sparc__) && SANITIZER_WORDSIZE == 64
+< #  include "asan_mapping_sparc64.h"
+---
+> #if SANITIZER_MYRIAD2
+> #include "asan_mapping_myriad.h"
+> #elif defined(__sparc__) && SANITIZER_WORDSIZE == 64
+> #include "asan_mapping_sparc64.h"
+347c373
+< #endif
+---
+> #endif  // SANITIZER_MYRIAD2
+376a403,404
+>   if (SANITIZER_MYRIAD2 && !AddrIsInMem(a) && !AddrIsInShadow(a))
+>     return false;
+只在 /home/seal/workspace/gcc-11.2.0/libsanitizer/asan/ 存在：asan_mapping_myriad.h
+diff asan/asan_new_delete.cpp /home/seal/workspace/gcc-11.2.0/libsanitizer/asan/asan_new_delete.cpp
+14,15d13
+< #include <stddef.h>
+< 
+17a16
+> #include "asan_malloc_local.h"
+19a19
+> 
+21a22,23
+> #include <stddef.h>
+> 
+46c48
+< #define CXX_OPERATOR_ATTRIBUTE INTERCEPTOR_ATTRIBUTE SANITIZER_WEAK_ATTRIBUTE
+---
+> #define CXX_OPERATOR_ATTRIBUTE INTERCEPTOR_ATTRIBUTE
+72a75
+>   MAYBE_ALLOCATE_FROM_LOCAL_POOL(nothrow);          \
+78a82
+>   MAYBE_ALLOCATE_FROM_LOCAL_POOL(nothrow);                    \
+91a96
+> #if 0
+131a137,139
+> #endif
+> 
+> 
+134c142,143
+<   GET_STACK_TRACE_FREE;            \
+---
+>   if (IS_FROM_LOCAL_POOL(ptr)) return;\
+>   GET_STACK_TRACE_FREE;\
+138c147,148
+<   GET_STACK_TRACE_FREE;                 \
+---
+>   if (IS_FROM_LOCAL_POOL(ptr)) return;\
+>   GET_STACK_TRACE_FREE;\
+142c152,153
+<   GET_STACK_TRACE_FREE;                  \
+---
+>   if (IS_FROM_LOCAL_POOL(ptr)) return;\
+>   GET_STACK_TRACE_FREE;\
+146c157,158
+<   GET_STACK_TRACE_FREE;                       \
+---
+>   if (IS_FROM_LOCAL_POOL(ptr)) return;\
+>   GET_STACK_TRACE_FREE;\
+148a161
+> #if 0
+196a210
+> #endif
+diff asan/asan_poisoning.cpp /home/seal/workspace/gcc-11.2.0/libsanitizer/asan/asan_poisoning.cpp
+176,177c176
+<   if (!size)
+<     return 0;
+---
+>   if (!size) return 0;
+179,182c178,186
+<   if (!AddrIsInMem(beg))
+<     return beg;
+<   if (!AddrIsInMem(end))
+<     return end;
+---
+>   if (SANITIZER_MYRIAD2) {
+>     // On Myriad, address not in DRAM range need to be treated as
+>     // unpoisoned.
+>     if (!AddrIsInMem(beg) && !AddrIsInShadow(beg)) return 0;
+>     if (!AddrIsInMem(end) && !AddrIsInShadow(end)) return 0;
+>   } else {
+>     if (!AddrIsInMem(beg)) return beg;
+>     if (!AddrIsInMem(end)) return end;
+>   }
+191c195,196
+<   if (!__asan::AddressIsPoisoned(beg) && !__asan::AddressIsPoisoned(end - 1) &&
+---
+>   if (!__asan::AddressIsPoisoned(beg) &&
+>       !__asan::AddressIsPoisoned(end - 1) &&
+362c367
+<            FIRST_32_SECOND_64(1UL << 30, 1ULL << 40)); // Sanity check.
+---
+>            FIRST_32_SECOND_64(1UL << 30, 1ULL << 34)); // Sanity check.
+diff asan/asan_poisoning.h /home/seal/workspace/gcc-11.2.0/libsanitizer/asan/asan_poisoning.h
+53a54,56
+>       // RTEMS doesn't have have pages, let alone a fast way to zero
+>       // them, so default to memset.
+>       SANITIZER_RTEMS == 1 ||
+diff asan/asan_posix.cpp /home/seal/workspace/gcc-11.2.0/libsanitizer/asan/asan_posix.cpp
+59c59
+<   // Since we're on the signal alternate stack, we cannot find the DEFAULT
+---
+>   // Since we're on the signal altnerate stack, we cannot find the DEFAULT
+只在 /home/seal/workspace/gcc-11.2.0/libsanitizer/asan/ 存在：asan_rtems.cpp
+diff asan/asan_rtl.cpp /home/seal/workspace/gcc-11.2.0/libsanitizer/asan/asan_rtl.cpp
+16d15
+< #include "asan_fake_stack.h"
+27d25
+< #include "lsan/lsan_common.h"
+31a30
+> #include "lsan/lsan_common.h"
+66,68c65,77
+< static void CheckUnwind() {
+<   GET_STACK_TRACE(kStackTraceMax, common_flags()->fast_unwind_on_check);
+<   stack.Print();
+---
+> static void AsanCheckFailed(const char *file, int line, const char *cond,
+>                             u64 v1, u64 v2) {
+>   Report("AddressSanitizer CHECK failed: %s:%d \"%s\" (0x%zx, 0x%zx)\n", file,
+>          line, cond, (uptr)v1, (uptr)v2);
+> 
+>   // Print a stack trace the first time we come here. Otherwise, we probably
+>   // failed a CHECK during symbolization.
+>   static atomic_uint32_t num_calls;
+>   if (atomic_fetch_add(&num_calls, 1, memory_order_relaxed) == 0) {
+>     PRINT_CURRENT_STACK_CHECK();
+>   }
+> 
+>   Die();
+85,95d93
+< NOINLINE
+< static void ReportGenericErrorWrapper(uptr addr, bool is_write, int size,
+<                                       int exp_arg, bool fatal) {
+<   if (__asan_test_only_reported_buggy_pointer) {
+<     *__asan_test_only_reported_buggy_pointer = addr;
+<   } else {
+<     GET_CALLER_PC_BP_SP;
+<     ReportGenericError(pc, bp, sp, addr, is_write, size, exp_arg, fatal);
+<   }
+< }
+< 
+152,161c150,167
+<   uptr sp = MEM_TO_SHADOW(addr);                                               \
+<   uptr s = size <= SHADOW_GRANULARITY ? *reinterpret_cast<u8 *>(sp)            \
+<                                       : *reinterpret_cast<u16 *>(sp);          \
+<   if (UNLIKELY(s)) {                                                           \
+<     if (UNLIKELY(size >= SHADOW_GRANULARITY ||                                 \
+<                  ((s8)((addr & (SHADOW_GRANULARITY - 1)) + size - 1)) >=       \
+<                      (s8)s)) {                                                 \
+<       ReportGenericErrorWrapper(addr, is_write, size, exp_arg, fatal);         \
+<     }                                                                          \
+<   }
+---
+>     if (SANITIZER_MYRIAD2 && !AddrIsInMem(addr) && !AddrIsInShadow(addr))      \
+>       return;                                                                  \
+>     uptr sp = MEM_TO_SHADOW(addr);                                             \
+>     uptr s = size <= SHADOW_GRANULARITY ? *reinterpret_cast<u8 *>(sp)          \
+>                                         : *reinterpret_cast<u16 *>(sp);        \
+>     if (UNLIKELY(s)) {                                                         \
+>       if (UNLIKELY(size >= SHADOW_GRANULARITY ||                               \
+>                    ((s8)((addr & (SHADOW_GRANULARITY - 1)) + size - 1)) >=     \
+>                        (s8)s)) {                                               \
+>         if (__asan_test_only_reported_buggy_pointer) {                         \
+>           *__asan_test_only_reported_buggy_pointer = addr;                     \
+>         } else {                                                               \
+>           GET_CALLER_PC_BP_SP;                                                 \
+>           ReportGenericError(pc, bp, sp, addr, is_write, size, exp_arg,        \
+>                               fatal);                                          \
+>         }                                                                      \
+>       }                                                                        \
+>     }
+311a318
+> #if !SANITIZER_MYRIAD2
+318a326
+> #endif  // !SANITIZER_MYRIAD2
+427c435
+<   SetCheckUnwindCallback(CheckUnwind);
+---
+>   SetCheckFailedCallback(AsanCheckFailed);
+563c571
+<   PoisonShadow(bottom, RoundUpTo(top - bottom, SHADOW_GRANULARITY), 0);
+---
+>   PoisonShadow(bottom, top - bottom, 0);
+573a582,584
+>   } else if (SANITIZER_RTEMS) {
+>     // Give up On RTEMS.
+>     return;
+588,593c599,600
+<   if (!curr_thread)
+<     return;
+<   FakeStack *stack = curr_thread->get_fake_stack();
+<   if (!stack)
+<     return;
+<   stack->HandleNoReturn();
+---
+>   if (curr_thread && curr_thread->has_fake_stack())
+>     curr_thread->fake_stack()->HandleNoReturn();
+diff asan/asan_shadow_setup.cpp /home/seal/workspace/gcc-11.2.0/libsanitizer/asan/asan_shadow_setup.cpp
+16,17c16,18
+< // asan_fuchsia.cpp has their own InitializeShadowMemory implementation.
+< #if !SANITIZER_FUCHSIA
+---
+> // asan_fuchsia.cpp and asan_rtems.cpp have their own
+> // InitializeShadowMemory implementation.
+> #if !SANITIZER_FUCHSIA && !SANITIZER_RTEMS
+19,20c20,21
+< #  include "asan_internal.h"
+< #  include "asan_mapping.h"
+---
+> #include "asan_internal.h"
+> #include "asan_mapping.h"
+125c126
+< #endif  // !SANITIZER_FUCHSIA
+---
+> #endif  // !SANITIZER_FUCHSIA && !SANITIZER_RTEMS
+diff asan/asan_stack.cpp /home/seal/workspace/gcc-11.2.0/libsanitizer/asan/asan_stack.cpp
+77,78c77
+<   Unwind(max_depth, pc, bp, context, t ? t->stack_top() : 0,
+<          t ? t->stack_bottom() : 0, false);
+---
+>   Unwind(max_depth, pc, bp, context, 0, 0, false);
+diff asan/asan_stack.h /home/seal/workspace/gcc-11.2.0/libsanitizer/asan/asan_stack.h
+56a57,59
+> #define GET_STACK_TRACE_CHECK_HERE                                \
+>   GET_STACK_TRACE(kStackTraceMax, common_flags()->fast_unwind_on_check)
+> 
+68a72,77
+>   }
+> 
+> #define PRINT_CURRENT_STACK_CHECK() \
+>   {                                 \
+>     GET_STACK_TRACE_CHECK_HERE;     \
+>     stack.Print();                  \
+只在 asan/ 存在：asan.syms.extra
+diff asan/asan_thread.cpp /home/seal/workspace/gcc-11.2.0/libsanitizer/asan/asan_thread.cpp
+63,64c63,64
+<     asan_thread_registry =
+<         new (thread_registry_placeholder) ThreadRegistry(GetAsanThreadContext);
+---
+>     asan_thread_registry = new(thread_registry_placeholder) ThreadRegistry(
+>         GetAsanThreadContext, kMaxNumberOfThreads, kMaxNumberOfThreads);
+103,119c103,111
+<   bool was_running =
+<       (asanThreadRegistry().FinishThread(tid) == ThreadStatusRunning);
+<   if (was_running) {
+<     if (AsanThread *thread = GetCurrentThread())
+<       CHECK_EQ(this, thread);
+<     malloc_storage().CommitBack();
+<     if (common_flags()->use_sigaltstack)
+<       UnsetAlternateSignalStack();
+<     FlushToDeadThreadStats(&stats_);
+<     // We also clear the shadow on thread destruction because
+<     // some code may still be executing in later TSD destructors
+<     // and we don't want it to have any poisoned stack.
+<     ClearShadowForThreadStackAndTLS();
+<     DeleteFakeStack(tid);
+<   } else {
+<     CHECK_NE(this, GetCurrentThread());
+<   }
+---
+>   malloc_storage().CommitBack();
+>   if (common_flags()->use_sigaltstack) UnsetAlternateSignalStack();
+>   asanThreadRegistry().FinishThread(tid);
+>   FlushToDeadThreadStats(&stats_);
+>   // We also clear the shadow on thread destruction because
+>   // some code may still be executing in later TSD destructors
+>   // and we don't want it to have any poisoned stack.
+>   ClearShadowForThreadStackAndTLS();
+>   DeleteFakeStack(tid);
+122,123c114
+<   if (was_running)
+<     DTLS_Destroy();
+---
+>   DTLS_Destroy();
+231c222
+<   DCHECK_NE(tid(), kInvalidTid);
+---
+>   DCHECK_NE(tid(), ThreadRegistry::kUnknownTid);
+260,262c251,254
+< // Fuchsia doesn't use ThreadStart.
+< // asan_fuchsia.c definies CreateMainThread and SetThreadStackAndTls.
+< #if !SANITIZER_FUCHSIA
+---
+> // Fuchsia and RTEMS don't use ThreadStart.
+> // asan_fuchsia.c/asan_rtems.c define CreateMainThread and
+> // SetThreadStackAndTls.
+> #if !SANITIZER_FUCHSIA && !SANITIZER_RTEMS
+264c256,257
+< thread_return_t AsanThread::ThreadStart(tid_t os_id) {
+---
+> thread_return_t AsanThread::ThreadStart(
+>     tid_t os_id, atomic_uintptr_t *signal_thread_is_registered) {
+266a260,261
+>   if (signal_thread_is_registered)
+>     atomic_store(signal_thread_is_registered, 1, memory_order_release);
+293c288
+<       /* start_routine */ nullptr, /* arg */ nullptr, /* parent_tid */ kMainTid,
+---
+>       /* start_routine */ nullptr, /* arg */ nullptr, /* parent_tid */ 0,
+296c291,292
+<   main_thread->ThreadStart(internal_getpid());
+---
+>   main_thread->ThreadStart(internal_getpid(),
+>                            /* signal_thread_is_registered */ nullptr);
+307,309c303,305
+<   GetThreadStackAndTls(tid() == kMainTid, &stack_bottom_, &stack_size,
+<                        &tls_begin_, &tls_size);
+<   stack_top_ = RoundDownTo(stack_bottom_ + stack_size, SHADOW_GRANULARITY);
+---
+>   GetThreadStackAndTls(tid() == 0, &stack_bottom_, &stack_size, &tls_begin_,
+>                        &tls_size);
+>   stack_top_ = stack_bottom_ + stack_size;
+319c315
+< #endif  // !SANITIZER_FUCHSIA
+---
+> #endif  // !SANITIZER_FUCHSIA && !SANITIZER_RTEMS
+341,342c337,338
+<   } else if (FakeStack *fake_stack = get_fake_stack()) {
+<     bottom = fake_stack->AddrIsInFakeStack(addr);
+---
+>   } else if (has_fake_stack()) {
+>     bottom = fake_stack()->AddrIsInFakeStack(addr);
+382,383c378,379
+<   } else if (FakeStack *fake_stack = get_fake_stack()) {
+<     bottom = fake_stack->AddrIsInFakeStack(addr);
+---
+>   } else if (has_fake_stack()) {
+>     bottom = fake_stack()->AddrIsInFakeStack(addr);
+411c407
+<   AsanThreadContext *tctx = static_cast<AsanThreadContext *>(tctx_base);
+---
+>   AsanThreadContext *tctx = static_cast<AsanThreadContext*>(tctx_base);
+413,415c409,411
+<   if (!t)
+<     return false;
+<   if (t->AddrIsInStack((uptr)addr))
+---
+>   if (!t) return false;
+>   if (t->AddrIsInStack((uptr)addr)) return true;
+>   if (t->has_fake_stack() && t->fake_stack()->AddrIsInFakeStack((uptr)addr))
+417,420c413
+<   FakeStack *fake_stack = t->get_fake_stack();
+<   if (!fake_stack)
+<     return false;
+<   return fake_stack->AddrIsInFakeStack((uptr)addr);
+---
+>   return false;
+423a417,419
+>   if (SANITIZER_RTEMS && !asan_inited)
+>     return nullptr;
+> 
+433c429
+<       AsanThreadContext *tctx = GetThreadContextByTidLocked(kMainTid);
+---
+>       AsanThreadContext *tctx = GetThreadContextByTidLocked(0);
+470c466
+<   if (context && (context->tid == kMainTid))
+---
+>   if (context && (context->tid == 0))
+505,510c501,502
+<   if (!t)
+<     return;
+<   __asan::FakeStack *fake_stack = t->get_fake_stack();
+<   if (!fake_stack)
+<     return;
+<   fake_stack->ForEachFakeFrame(callback, arg);
+---
+>   if (t && t->has_fake_stack())
+>     t->fake_stack()->ForEachFakeFrame(callback, arg);
+diff asan/asan_thread.h /home/seal/workspace/gcc-11.2.0/libsanitizer/asan/asan_thread.h
+30a31,33
+> const u32 kInvalidTid = 0xffffff;  // Must fit into 24 bits.
+> const u32 kMaxNumberOfThreads = (1 << 22);  // 4M
+> 
+69c72,73
+<   thread_return_t ThreadStart(tid_t os_id);
+---
+>   thread_return_t ThreadStart(tid_t os_id,
+>                               atomic_uintptr_t *signal_thread_is_registered);
+105,110c109,111
+<   FakeStack *get_fake_stack() {
+<     if (atomic_load(&stack_switching_, memory_order_relaxed))
+<       return nullptr;
+<     if (reinterpret_cast<uptr>(fake_stack_) <= 1)
+<       return nullptr;
+<     return fake_stack_;
+---
+>   bool has_fake_stack() {
+>     return !atomic_load(&stack_switching_, memory_order_relaxed) &&
+>            (reinterpret_cast<uptr>(fake_stack_) > 1);
+113c114,116
+<   FakeStack *get_or_create_fake_stack() {
+---
+>   FakeStack *fake_stack() {
+>     if (!__asan_option_detect_stack_use_after_return)
+>       return nullptr;
+116c119
+<     if (reinterpret_cast<uptr>(fake_stack_) <= 1)
+---
+>     if (!has_fake_stack())
+131,132d133
+< 
+<   void *get_arg() { return arg_; }
+diff asan/asan_win.cpp /home/seal/workspace/gcc-11.2.0/libsanitizer/asan/asan_win.cpp
+137c137
+<   return t->ThreadStart(GetTid());
+---
+>   return t->ThreadStart(GetTid(), /* signal_thread_is_registered */ nullptr);
+只在 /home/seal/workspace/gcc-11.2.0/libsanitizer/asan/ 存在：.ccls-cache
+只在 asan/ 存在：.clang-format
+只在 asan/ 存在：CMakeLists.txt
+只在 /home/seal/workspace/gcc-11.2.0/libsanitizer/asan/ 存在：.git
+只在 /home/seal/workspace/gcc-11.2.0/libsanitizer/asan/ 存在：libtool-version
+只在 /home/seal/workspace/gcc-11.2.0/libsanitizer/asan/ 存在：Makefile.am
+只在 /home/seal/workspace/gcc-11.2.0/libsanitizer/asan/ 存在：Makefile.in
+只在 asan/ 存在：README.txt
+只在 asan/ 存在：scripts
+只在 asan/ 存在：tests
+只在 asan/ 存在：weak_symbols.txt

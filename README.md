@@ -8,7 +8,7 @@ A faster,smaller,Address Sanitizer
 |          | 内存消耗  | CPU消耗   |
 | :------- | --------- | --------- |
 | ASAN原版 | +100-150% | +200%以上 |
-| FirASAN  | +10%      | 1%以内    |
+| FirASAN  | +5%      | 1%以内    |
 |          |           |           |
 
 ## 背景:

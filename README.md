@@ -1,6 +1,6 @@
 # FirASAN(Fir Address Sanitizer)
 A faster,smaller,Address Sanitizer
-100X Faster,95% Smaller.
+200X Faster,95% Smaller.
 
 #                                                                 FirASAN
 
